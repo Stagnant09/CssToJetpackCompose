@@ -1,5 +1,10 @@
 package com.example.cssintegration.cssUtils
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.absolutePadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontStyle
@@ -9,9 +14,6 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.padding
 import androidx.core.graphics.toColorInt
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -42,6 +44,8 @@ fun parseCssDeclaration(css: String): StyleResult {
     var letterSpacing = TextUnit.Unspecified
     var lineHeight = TextUnit.Unspecified
     var textDecoration: TextDecoration? = null
+    var verticalAlignment: Alignment.Vertical? = null
+    var horizontalAlignment: Alignment.Horizontal? = null
 
     css.split(";")
         .map { it.trim() }
@@ -52,24 +56,31 @@ fun parseCssDeclaration(css: String): StyleResult {
 
             when (key) {
                 // ── Typography ──────────────────────────────────────────────
-                "color"            -> color = parseColor(value)
-                "font-size"        -> fontSize = parseLengthAsTextUnit(value)
-                "font-weight"      -> fontWeight = parseFontWeight(value)
-                "font-style"       -> fontStyle = parseFontStyle(value)
-                "text-align"       -> textAlign = parseTextAlign(value)
-                "letter-spacing"   -> letterSpacing = parseLengthAsTextUnit(value)
-                "line-height"      -> lineHeight = parseLengthAsTextUnit(value)
-                "text-decoration"  -> textDecoration = parseTextDecoration(value)
+                "color" -> color = parseColor(value)
+                "font-size" -> fontSize = parseLengthAsTextUnit(value)
+                "font-weight" -> fontWeight = parseFontWeight(value)
+                "font-style" -> fontStyle = parseFontStyle(value)
+                "text-align" -> textAlign = parseTextAlign(value)
+                "letter-spacing" -> letterSpacing = parseLengthAsTextUnit(value)
+                "line-height" -> lineHeight = parseLengthAsTextUnit(value)
+                "text-decoration" -> textDecoration = parseTextDecoration(value)
 
                 // ── Layout / Box ─────────────────────────────────────────────
-                "padding"          -> modifier = modifier.then(parsePadding(value))
+                "padding" -> modifier = modifier.then(parsePadding(value))
                 "background-color",
-                "background"       -> parseColorOrNull(value)?.let { bg ->
+                "background" -> parseColorOrNull(value)?.let { bg ->
                     modifier = modifier.background(bg)
                 }
-                "border"           -> parseBorderOrNull(value)?.let { (width, clr) ->
+
+                "border" -> parseBorderOrNull(value)?.let { (width, clr) ->
                     modifier = modifier.border(width.dp, clr)
                 }
+
+                "margin" -> modifier = modifier.then(parseMargin(value))
+
+                // ── Display ──────────────────────────────────────────────────
+                "align-content" -> verticalAlignment = parseVerticalAlignment(value)
+                "justify-content" -> horizontalAlignment = parseHorizontalAlignment(value)
             }
         }
 
@@ -83,6 +94,8 @@ fun parseCssDeclaration(css: String): StyleResult {
         letterSpacing = letterSpacing,
         lineHeight = lineHeight,
         textDecoration = textDecoration,
+        verticalAlignment = verticalAlignment,
+        horizontalAlignment = horizontalAlignment
     )
 }
 
@@ -165,6 +178,25 @@ internal fun parsePadding(value: String): Modifier {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Margin handling
+// ─────────────────────────────────────────────────────────────────────────────
+fun parseMargin(value: String): Modifier {
+    val parts = value.trim().split(Regex("\\s+"))
+        .mapNotNull { token ->
+            val v = token.lowercase().removeSuffix("px").removeSuffix("dp").toFloatOrNull()
+            v?.dp
+        }
+
+    return when (parts.size) {
+        1 -> Modifier.absolutePadding(parts[0], parts[0], parts[0], parts[0])
+        2 -> Modifier.absolutePadding(parts[1], parts[0], parts[1], parts[0])
+        3 -> Modifier.absolutePadding(parts[1], parts[0], parts[1], parts[2])
+        4 -> Modifier.absolutePadding(parts[3], parts[0], parts[1], parts[2])
+        else -> Modifier
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Border shorthand
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -175,7 +207,7 @@ internal fun parsePadding(value: String): Modifier {
  *
  * Returns `null` if parsing fails, allowing the caller to skip the modifier.
  */
-internal fun parseBorderOrNull(value: String): Pair<Float, Color>? {
+fun parseBorderOrNull(value: String): Pair<Float, Color>? {
     val parts = value.trim().split(Regex("\\s+"))
     val width = parts.firstOrNull()
         ?.lowercase()
@@ -284,4 +316,18 @@ fun parseTextDecoration(tDecor: String): TextDecoration = when (tDecor.trim().lo
     "underline"    -> TextDecoration.Underline
     "line-through" -> TextDecoration.LineThrough
     else           -> TextDecoration.None
+}
+
+fun parseVerticalAlignment(vAlign: String) : Alignment.Vertical? = when (vAlign.trim().lowercase()) {
+    "flex-start" -> Alignment.Top
+    "flex-end" -> Alignment.Bottom
+    "center" -> Alignment.CenterVertically
+    else -> null
+}
+
+fun parseHorizontalAlignment(hAlign: String) : Alignment.Horizontal? = when (hAlign.trim().lowercase()) {
+    "flex-start" -> Alignment.Start
+    "flex-end" -> Alignment.End
+    "center" -> Alignment.CenterHorizontally
+    else -> null
 }

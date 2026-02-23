@@ -40,9 +40,11 @@ private const val css = "color: #E71E63;" +
         " letter-spacing: 5px;" +
         " text-decoration: underline"
 
-private const val boxCss = "background-color: #434343;"
+private const val boxCss = "background-color: #434343;" +
+        " border: 6px solid #E71E63;" +
+        " margin: 20px;"
 
-@CssStyle(css)
+//@CssStyle(css)
 @Composable
 fun Headline(text: String) {
     val textStyle = rememberParsedCss(css)

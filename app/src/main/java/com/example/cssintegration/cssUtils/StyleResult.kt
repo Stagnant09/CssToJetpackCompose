@@ -2,6 +2,7 @@ package com.example.cssintegration.cssUtils
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
@@ -36,6 +37,8 @@ data class StyleResult(
     val letterSpacing: TextUnit = TextUnit.Unspecified,
     val lineHeight: TextUnit = TextUnit.Unspecified,
     val textDecoration: TextDecoration? = null,
+    val verticalAlignment: Alignment.Vertical? = null,
+    val horizontalAlignment: Alignment.Horizontal? = null
 ) {
     /**
      * Converts the typographic fields of this [StyleResult] into a Compose [TextStyle].
