@@ -27,18 +27,18 @@ import com.example.cssintegration.annotation.CssStyle
  * Use the convenience extensions [toTextStyle] and [modifier] when binding
  * to Compose components.
  */
-data class StyleResult(
-    val modifier: Modifier = Modifier,
-    val color: Color = Color.Unspecified,
-    val fontSize: TextUnit = TextUnit.Unspecified,
-    val fontWeight: FontWeight? = null,
-    val fontStyle: FontStyle? = null,
-    val textAlign: TextAlign? = null,
-    val letterSpacing: TextUnit = TextUnit.Unspecified,
-    val lineHeight: TextUnit = TextUnit.Unspecified,
-    val textDecoration: TextDecoration? = null,
-    val verticalAlignment: Alignment.Vertical? = null,
-    val horizontalAlignment: Alignment.Horizontal? = null
+open class StyleResult(
+    open val modifier: Modifier = Modifier,
+    open val color: Color = Color.Unspecified,
+    open val fontSize: TextUnit = TextUnit.Unspecified,
+    open val fontWeight: FontWeight? = null,
+    open val fontStyle: FontStyle? = null,
+    open val textAlign: TextAlign? = null,
+    open val letterSpacing: TextUnit = TextUnit.Unspecified,
+    open val lineHeight: TextUnit = TextUnit.Unspecified,
+    open val textDecoration: TextDecoration? = null,
+    open val verticalAlignment: Alignment.Vertical? = null,
+    open val horizontalAlignment: Alignment.Horizontal? = null
 ) {
     /**
      * Converts the typographic fields of this [StyleResult] into a Compose [TextStyle].
@@ -93,3 +93,21 @@ inline fun <reified T : Any> T.rememberCssStyle(): StyleResult {
  */
 @Composable
 fun rememberParsedCss(css: String): StyleResult = remember(css) { parseCssDeclaration(css) }
+
+/** Extends `StyleResult` for UI elements that are clickable
+ */
+class ClickableStyleResult(
+    override val modifier: Modifier = Modifier,
+    override val color: Color = Color.Unspecified,
+    override val fontSize: TextUnit = TextUnit.Unspecified,
+    override val fontWeight: FontWeight? = null,
+    override val fontStyle: FontStyle? = null,
+    override val textAlign: TextAlign? = null,
+    override val letterSpacing: TextUnit = TextUnit.Unspecified,
+    override val lineHeight: TextUnit = TextUnit.Unspecified,
+    override val textDecoration: TextDecoration? = null,
+    override val verticalAlignment: Alignment.Vertical? = null,
+    override val horizontalAlignment: Alignment.Horizontal? = null,
+    val onHover: (() -> Unit)? = null,
+    val onClick: (() -> Unit)? = null
+) : StyleResult()

@@ -3,7 +3,11 @@ package com.example.cssintegration.cssUtils
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.absolutePadding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -81,6 +85,14 @@ fun parseCssDeclaration(css: String): StyleResult {
                 // ── Display ──────────────────────────────────────────────────
                 "align-content" -> verticalAlignment = parseVerticalAlignment(value)
                 "justify-content" -> horizontalAlignment = parseHorizontalAlignment(value)
+
+                // ── Dimensions ───────────────────────────────────────────────
+                "height" -> modifier = modifier.then(parseHeight(height = value))
+                "min-height" -> modifier = modifier.then(parseHeight(height = value, min = true))
+                "max-height" -> modifier = modifier.then(parseHeight(height = value, max = true))
+                "width" -> modifier = modifier.then(parseWidth(width = value))
+                "min-width" -> modifier = modifier.then(parseWidth(width = value, min = true))
+                "max-width" -> modifier = modifier.then(parseWidth(width = value, max = true))
             }
         }
 
@@ -96,6 +108,29 @@ fun parseCssDeclaration(css: String): StyleResult {
         textDecoration = textDecoration,
         verticalAlignment = verticalAlignment,
         horizontalAlignment = horizontalAlignment
+    )
+}
+
+// Overload
+fun parseCssDeclaration(css: String, clickable: Boolean) : StyleResult {
+    val parsed = parseCssDeclaration(css)
+    if (!clickable) {
+        return parsed
+    }
+    return ClickableStyleResult(
+        modifier = parsed.modifier,
+        color = parsed.color,
+        fontSize = parsed.fontSize,
+        fontWeight = parsed.fontWeight,
+        fontStyle = parsed.fontStyle,
+        textAlign = parsed.textAlign,
+        letterSpacing = parsed.letterSpacing,
+        lineHeight = parsed.lineHeight,
+        textDecoration = parsed.textDecoration,
+        verticalAlignment = parsed.verticalAlignment,
+        horizontalAlignment = parsed.horizontalAlignment,
+        onHover = {},
+        onClick = {}
     )
 }
 
@@ -331,3 +366,25 @@ fun parseHorizontalAlignment(hAlign: String) : Alignment.Horizontal? = when (hAl
     "center" -> Alignment.CenterHorizontally
     else -> null
 }
+
+// Handle hover effect
+fun parseHover(css: String) {
+
+}
+
+fun parseHeight(height: String, min: Boolean = false, max: Boolean = false) : Modifier {
+    return when {
+        min && !max -> Modifier.heightIn(min = height.toInt().dp)
+        !min && max -> Modifier.heightIn(max = height.toInt().dp)
+        else -> Modifier.height(height.toInt().dp)
+    }
+}
+
+fun parseWidth(width: String, min: Boolean = false, max: Boolean = false) : Modifier{
+    return when {
+        min && !max -> Modifier.widthIn(min = width.toInt().dp)
+        !min && max -> Modifier.widthIn(max = width.toInt().dp)
+        else -> Modifier.width(width.toInt().dp)
+    }
+}
+
