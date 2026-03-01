@@ -1,5 +1,6 @@
 package com.example.cssintegration.cssUtils
 
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -13,6 +14,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import com.example.cssintegration.annotation.CssStyle
+import com.example.cssintegration.ui.components.Wrap
 
 // ─────────────────────────────────────────────────────────────────────────────
 // StyleResult  —  immutable container for all resolved styling
@@ -110,4 +112,21 @@ class ClickableStyleResult(
     override val horizontalAlignment: Alignment.Horizontal? = null,
     val onHover: (() -> Unit)? = null,
     val onClick: (() -> Unit)? = null
+) : StyleResult()
+
+class DivStyleResult(
+    override val modifier: Modifier = Modifier,
+    override val color: Color = Color.Unspecified,
+    override val fontSize: TextUnit = TextUnit.Unspecified,
+    override val fontWeight: FontWeight? = null,
+    override val fontStyle: FontStyle? = null,
+    override val textAlign: TextAlign? = null,
+    override val letterSpacing: TextUnit = TextUnit.Unspecified,
+    override val lineHeight: TextUnit = TextUnit.Unspecified,
+    override val textDecoration: TextDecoration? = null,
+    override val verticalAlignment: Alignment.Vertical? = null,
+    override val horizontalAlignment: Alignment.Horizontal? = null,
+    val onHover: (() -> Unit)? = null,
+    val onClick: (() -> Unit)? = null,
+    val wrap: Wrap? = null
 ) : StyleResult()

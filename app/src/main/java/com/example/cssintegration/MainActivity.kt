@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import com.example.cssintegration.annotation.CssStyle
 import com.example.cssintegration.cssUtils.rememberParsedCss
+import com.example.cssintegration.ui.components.Div
 import com.example.cssintegration.ui.theme.CssIntegrationTheme
 
 class MainActivity : ComponentActivity() {
@@ -24,7 +25,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             CssIntegrationTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    Column(modifier = Modifier.padding(innerPadding)){
+                    Column(modifier = Modifier.padding(innerPadding)) {
                         Headline("Hello World")
                     }
                 }
@@ -44,6 +45,11 @@ private const val boxCss = "background-color: #434343;" +
         " border: 6px solid #E71E63;" +
         " margin: 20px;"
 
+private const val divCss = "display: flex;" +
+        " flex-direction: column;"
+
+private const val divTextCss = "color: white"
+
 //@CssStyle(css)
 @Composable
 fun Headline(text: String) {
@@ -51,17 +57,23 @@ fun Headline(text: String) {
     val boxStyle = rememberParsedCss(boxCss)
     Box(
         modifier = boxStyle.modifier,
-    ){
-        Text(
-            text = text,
-            style = textStyle.toTextStyle(),
-            modifier = textStyle.modifier,
-        )
+    ) {
+        Div(
+            css = divCss,
+        ) {
+            Text(
+                text = text,
+                style = textStyle.toTextStyle(),
+                modifier = textStyle.modifier,
+            )
+            Text(text = "Hello World", style = rememberParsedCss(divTextCss).toTextStyle())
+            Text(text = "Hello World", style = rememberParsedCss(divTextCss).toTextStyle())
+        }
     }
 }
 
 @Preview
 @Composable
-fun HeadlinePreview(){
+fun HeadlinePreview() {
     Headline("Hello world")
 }
