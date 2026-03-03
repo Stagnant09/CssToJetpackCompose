@@ -34,14 +34,14 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private const val css = "color: #E71E63;" +
+private const val css = "color: #f0ffff;" +
         " font-size: 32px;" +
         " font-weight: 700;" +
         " padding: 20px;" +
         " letter-spacing: 5px;" +
         " text-decoration: underline"
 
-private const val boxCss = "background-color: #434343;" +
+private const val boxCss = "background-color: #001a1a;" +
         " border: 6px solid #E71E63;" +
         " margin: 20px;"
 
@@ -49,6 +49,9 @@ private const val divCss = "display: flex;" +
         " flex-direction: column;"
 
 private const val divTextCss = "color: white"
+
+private const val divInnerCss = "display: flex;" +
+        " flex-direction: row;"
 
 //@CssStyle(css)
 @Composable
@@ -66,8 +69,12 @@ fun Headline(text: String) {
                 style = textStyle.toTextStyle(),
                 modifier = textStyle.modifier,
             )
-            Text(text = "Hello World", style = rememberParsedCss(divTextCss).toTextStyle())
-            Text(text = "Hello World", style = rememberParsedCss(divTextCss).toTextStyle())
+            Div(
+                css = divInnerCss
+            ) {
+                Text(text = "Hello", style = rememberParsedCss(divTextCss).toTextStyle())
+                Text(text = " World", style = rememberParsedCss(divTextCss).toTextStyle())
+            }
         }
     }
 }
