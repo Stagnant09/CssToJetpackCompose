@@ -17,7 +17,7 @@ class CssStyleAnnotationDetector : Detector(), Detector.UastScanner {
             val containingFunction = node.getParentOfType<UMethod>() ?: return
 
             val hasAnnotation = containingFunction.annotations
-                .any { it.qualifiedName == "com.example.cssintegration.annotations.CssStyle" }
+                .any { it.qualifiedName == "com.example.cssintegration.annotation.CssStyle" }
 
             if (!hasAnnotation) {
                 context.report(

@@ -36,6 +36,10 @@ android {
         compose = true
     }
 
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     lint {
         error += "MissingCssStyleAnnotation"   // promotes from warning to build error
         abortOnError = true                 // uncomment to fail the build

@@ -4,8 +4,10 @@ import androidx.compose.ui.graphics.Color
 
 fun rgb(r: Int, g: Int, b: Int) = Color(r / 255f, g / 255f, b / 255f, 1f)
 
-fun colorByName(name: String) : Color {
-    return when (name) {
+/** Resolves a CSS named color (case-insensitive). Returns `null` for unknown names. */
+fun colorByName(name: String): Color? {
+    return when (name.trim().lowercase()) {
+        "transparent"          -> Color.Transparent
         "aliceblue"            -> rgb(240, 248, 255)
         "antiquewhite"         -> rgb(250, 235, 215)
         "aqua"                 -> rgb(  0, 255, 255)
@@ -154,6 +156,6 @@ fun colorByName(name: String) : Color {
         "whitesmoke"           -> rgb(245, 245, 245)
         "yellow"               -> Color.Yellow
         "yellowgreen"          -> rgb(154, 205,  50)
-        else -> Color.Black
+        else -> null
     }
 }

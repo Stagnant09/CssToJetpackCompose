@@ -1,35 +1,94 @@
 package com.example.cssintegration.cssUtils
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.absolutePadding
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.core.graphics.toColorInt
-import com.example.cssintegration.ui.components.BlockWrap
-import com.example.cssintegration.ui.components.BoxWrap
-import com.example.cssintegration.ui.components.ColumnWrap
-import com.example.cssintegration.ui.components.GridWrap
-import com.example.cssintegration.ui.components.InlineWrap
-import com.example.cssintegration.ui.components.NoneWrap
-import com.example.cssintegration.ui.components.RowWrap
-import com.example.cssintegration.ui.components.Wrap
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Declarations
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A single `property: value` pair. [property] is lower-case (custom properties keep their case). */
+data class CssDeclaration(
+    val property: String,
+    val value: String,
+    val important: Boolean = false,
+)
+
+private val commentRegex = Regex("""/\*.*?\*/""", RegexOption.DOT_MATCHES_ALL)
+private val importantRegex = Regex("""\s*!\s*important\s*$""", RegexOption.IGNORE_CASE)
+
+/** Removes `/* … */` comments. */
+internal fun stripComments(css: String): String = css.replace(commentRegex, " ")
+
+/**
+ * Tokenises a declaration block into [CssDeclaration]s.
+ *
+ * Handles comments, `!important`, and semicolons inside parentheses or quotes
+ * (`background: url("a;b")`). Malformed declarations are skipped.
+ */
+fun parseDeclarations(css: String): List<CssDeclaration> {
+    val cleaned = stripComments(css)
+    val result = mutableListOf<CssDeclaration>()
+    val current = StringBuilder()
+    var depth = 0
+    var quote: Char? = null
+
+    fun flush() {
+        val declaration = current.toString().trim()
+        current.clear()
+        val colon = declaration.indexOf(':')
+        if (colon <= 0) return
+        val rawProperty = declaration.substring(0, colon).trim()
+        val property = if (isCustomProperty(rawProperty)) rawProperty else rawProperty.lowercase()
+        var value = declaration.substring(colon + 1).trim()
+        val important = importantRegex.containsMatchIn(value)
+        if (important) value = value.replace(importantRegex, "").trim()
+        if (property.isNotEmpty() && value.isNotEmpty()) {
+            result += CssDeclaration(property, value, important)
+        }
+    }
+
+    for (ch in cleaned) {
+        when {
+            quote != null -> { if (ch == quote) quote = null; current.append(ch) }
+            ch == '"' || ch == '\'' -> { quote = ch; current.append(ch) }
+            ch == '(' -> { depth++; current.append(ch) }
+            ch == ')' -> { depth = (depth - 1).coerceAtLeast(0); current.append(ch) }
+            ch == ';' && depth == 0 -> flush()
+            else -> current.append(ch)
+        }
+    }
+    flush()
+    return result
+}
+
+/**
+ * Applies the CSS cascade to declarations given in source order (lowest priority first):
+ * later declarations win, and `!important` beats anything that isn't.
+ *
+ * The returned map iterates in the order the *winning* declarations appeared, so
+ * shorthand/longhand interplay (`padding` vs `padding-top`) resolves the CSS way.
+ */
+fun cascade(declarations: Iterable<CssDeclaration>): Map<String, String> {
+    val result = LinkedHashMap<String, String>()
+    val importantProps = HashSet<String>()
+    for (d in declarations) {
+        if (d.property in importantProps && !d.important) continue
+        if (d.important) importantProps += d.property
+        result.remove(d.property)
+        result[d.property] = d.value
+    }
+    return result
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Top-level parser
@@ -39,371 +98,474 @@ import com.example.cssintegration.ui.components.Wrap
  * Parses a CSS declaration block — a semicolon-delimited set of `property: value`
  * pairs — into a fully resolved [StyleResult].
  *
- * This function is the single entry point for all CSS parsing. It handles:
- * - Whitespace normalisation
- * - Empty/malformed declarations gracefully (defaults to [StyleResult])
- * - Both text and layout properties in one pass
+ * ```kotlin
+ * val style = parseCssDeclaration("color: red; font-size: 14px; padding: 8px 16px;")
+ * ```
  *
- * @param css Raw CSS declaration string, e.g. `"color: red; font-size: 14;"`.
- *   Selector blocks and curly braces are **not** expected here.
+ * Custom properties declared in the block can be used with `var()` in the same block.
+ * Selector blocks and curly braces are **not** expected here; see [CssStylesheet].
  */
 fun parseCssDeclaration(css: String): StyleResult {
     if (css.isBlank()) return StyleResult()
+    val cascaded = cascade(parseDeclarations(css))
+    val variables = cascaded.filterKeys(::isCustomProperty)
+    return buildStyle(computeValues(cascaded, variables)).copy(variables = variables)
+}
 
-    var modifier: Modifier = Modifier
+private val sides = listOf("top", "right", "bottom", "left")
+private val corners = listOf("top-left", "top-right", "bottom-right", "bottom-left")
+
+/** The set of properties [buildStyle] understands. Anything else is ignored. */
+val SUPPORTED_CSS_PROPERTIES: Set<String> = buildSet {
+    // Typography
+    addAll(
+        listOf(
+            "color", "font", "font-size", "font-weight", "font-style", "font-family", "text-align",
+            "letter-spacing", "line-height", "text-decoration", "text-decoration-line",
+            "text-transform", "text-shadow", "white-space", "text-overflow", "line-clamp",
+            "-webkit-line-clamp",
+        )
+    )
+    // Box model
+    addAll(listOf("margin", "padding", "width", "height", "min-width", "max-width",
+        "min-height", "max-height", "aspect-ratio", "box-sizing"))
+    sides.forEach { add("margin-$it"); add("padding-$it") }
+    // Decoration
+    addAll(
+        listOf(
+            "background", "background-color", "background-image",
+            "border", "border-width", "border-style", "border-color", "border-radius",
+            "box-shadow", "opacity", "visibility", "overflow", "overflow-x", "overflow-y",
+            "z-index", "transform", "filter",
+        )
+    )
+    sides.forEach { side ->
+        add("border-$side"); add("border-$side-width"); add("border-$side-style"); add("border-$side-color")
+    }
+    corners.forEach { add("border-$it-radius") }
+    // Layout (consumed by Div)
+    addAll(
+        listOf(
+            "display", "flex-direction", "flex-wrap", "flex-flow", "justify-content", "align-items",
+            "align-content", "gap", "row-gap", "column-gap", "grid-template-columns",
+        )
+    )
+    // Flex items & positioning
+    addAll(listOf("flex", "flex-grow", "flex-shrink", "flex-basis", "align-self", "order",
+        "position", "top", "right", "bottom", "left", "inset"))
+    // Motion
+    addAll(
+        listOf(
+            "transition", "transition-property", "transition-duration", "transition-timing-function",
+            "transition-delay", "animation", "animation-name", "animation-duration",
+            "animation-timing-function", "animation-delay", "animation-iteration-count",
+            "animation-direction", "animation-fill-mode", "animation-play-state",
+        )
+    )
+}
+
+/** Builds a [StyleResult] from already-cascaded, computed declarations. */
+fun buildStyle(declarations: Map<String, String>): StyleResult {
+    var box = BoxStyle()
+    val margin = Array(4) { 0.dp }
+    val padding = Array(4) { 0.dp }
+    val borders = MutableList(4) { BorderSide() }
+    val radii = MutableList(4) { CornerValue.Zero }
+    var item = FlexItemStyle()
+    var insets = Insets()
+    var background: Brush? = null
+    var backgroundColor: Color? = null
+
     var color = Color.Unspecified
     var fontSize = TextUnit.Unspecified
     var fontWeight: FontWeight? = null
     var fontStyle: FontStyle? = null
+    var fontFamily: FontFamily? = null
     var textAlign: TextAlign? = null
     var letterSpacing = TextUnit.Unspecified
     var lineHeight = TextUnit.Unspecified
     var textDecoration: TextDecoration? = null
-    var verticalAlignment: Alignment.Vertical? = null
-    var horizontalAlignment: Alignment.Horizontal? = null
+    var textShadow: CssShadow? = null
+    var textTransform = TextTransform.None
+    var maxLines: Int? = null
+    var softWrap = true
+    var textOverflow = TextOverflow.Clip
 
-    css.split(";")
-        .map { it.trim() }
-        .filter { it.isNotEmpty() && ':' in it }
-        .forEach { declaration ->
-            val key = declaration.substringBefore(':').trim().lowercase()
-            val value = declaration.substringAfter(':').trim()
+    for ((property, value) in declarations) {
+        val v = value.trim()
+        when (property) {
+            // ── Typography ──────────────────────────────────────────────────
+            "color" -> parseColorOrNull(v)?.let { color = it }
+            "font" -> parseFontShorthand(v)?.let { font ->
+                fontStyle = font.style
+                fontWeight = font.weight
+                fontSize = font.size
+                font.lineHeight?.let { lineHeight = it }
+                font.family?.let { fontFamily = it }
+            }
+            "font-size" -> fontSize = parseLengthAsTextUnit(v)
+            "font-weight" -> fontWeight = parseFontWeight(v)
+            "font-style" -> fontStyle = parseFontStyle(v)
+            "font-family" -> fontFamily = parseFontFamily(v)
+            "text-align" -> textAlign = parseTextAlign(v)
+            "letter-spacing" -> letterSpacing = parseLengthAsTextUnit(v)
+            "line-height" -> lineHeight = parseLineHeight(v)
+            "text-decoration", "text-decoration-line" -> textDecoration = parseTextDecoration(v)
+            "text-transform" -> textTransform = parseTextTransform(v)
+            "text-shadow" -> textShadow = parseShadows(v).firstOrNull()
+            "white-space" -> softWrap = v.lowercase() !in setOf("nowrap", "pre")
+            "text-overflow" -> textOverflow =
+                if (v.lowercase() == "ellipsis") TextOverflow.Ellipsis else TextOverflow.Clip
+            "line-clamp", "-webkit-line-clamp" -> maxLines = v.toIntOrNull()?.coerceAtLeast(1)
 
-            when (key) {
-                // ── Typography ──────────────────────────────────────────────
-                "color" -> color = parseColor(value)
-                "font-size" -> fontSize = parseLengthAsTextUnit(value)
-                "font-weight" -> fontWeight = parseFontWeight(value)
-                "font-style" -> fontStyle = parseFontStyle(value)
-                "text-align" -> textAlign = parseTextAlign(value)
-                "letter-spacing" -> letterSpacing = parseLengthAsTextUnit(value)
-                "line-height" -> lineHeight = parseLengthAsTextUnit(value)
-                "text-decoration" -> textDecoration = parseTextDecoration(value)
+            // ── Box model ───────────────────────────────────────────────────
+            "margin" -> applyBoxShorthand(v, margin)
+            "padding" -> applyBoxShorthand(v, padding)
+            "width" -> box = box.copy(width = parseLength(v))
+            "height" -> box = box.copy(height = parseLength(v))
+            "min-width" -> box = box.copy(minWidth = parseDp(v))
+            "max-width" -> box = box.copy(maxWidth = parseDp(v))
+            "min-height" -> box = box.copy(minHeight = parseDp(v))
+            "max-height" -> box = box.copy(maxHeight = parseDp(v))
+            "aspect-ratio" -> box = box.copy(aspectRatio = parseAspectRatio(v))
 
-                // ── Layout / Box ─────────────────────────────────────────────
-                "padding" -> modifier = modifier.then(parsePadding(value))
-                "background-color",
-                "background" -> parseColorOrNull(value)?.let { bg ->
-                    modifier = modifier.background(bg)
+            // ── Decoration ──────────────────────────────────────────────────
+            "background" -> {
+                val bg = parseBackground(v)
+                background = bg.brush
+                backgroundColor = bg.color
+            }
+            "background-color" -> backgroundColor = parseColorOrNull(v)
+            "background-image" -> background = parseBackground(v).brush
+            "border" -> parseBorderSide(v).let { side -> for (i in 0..3) borders[i] = side }
+            "border-width" -> expandTokens(v, ::parseBorderWidth)?.forEachIndexed { i, w ->
+                borders[i] = borders[i].copy(width = w)
+            }
+            "border-style" -> expandTokens(v, BorderStyle::parse)?.forEachIndexed { i, s ->
+                borders[i] = borders[i].copy(style = s)
+            }
+            "border-color" -> expandTokens(v, ::parseColorOrNull)?.forEachIndexed { i, c ->
+                borders[i] = borders[i].copy(color = c)
+            }
+            "border-radius" -> parseCornerRadii(v)?.forEachIndexed { i, c -> radii[i] = c }
+            "box-shadow" -> box = box.copy(shadows = parseShadows(v).filterNot { it.inset })
+            "opacity" -> parseFraction(v)?.let { box = box.copy(opacity = it) }
+            "visibility" -> box = box.copy(hidden = v.lowercase() in setOf("hidden", "collapse"))
+            "overflow" -> {
+                val tokens = splitTokens(v.lowercase())
+                val x = parseOverflow(tokens.getOrNull(0))
+                val y = parseOverflow(tokens.getOrNull(1) ?: tokens.getOrNull(0))
+                box = box.copy(overflowX = x, overflowY = y)
+            }
+            "overflow-x" -> box = box.copy(overflowX = parseOverflow(v.lowercase()))
+            "overflow-y" -> box = box.copy(overflowY = parseOverflow(v.lowercase()))
+            "z-index" -> box = box.copy(zIndex = v.toFloatOrNull())
+            "transform" -> box = box.copy(transform = parseTransform(v))
+            "filter" -> parseFilter(v).let { (blur, filters) -> box = box.copy(blur = blur, filters = filters) }
+
+            // ── Flex item & positioning ─────────────────────────────────────
+            "flex" -> parseFlexShorthand(v)?.let { (grow, shrink, basis) ->
+                item = item.copy(grow = grow, shrink = shrink, basis = basis)
+            }
+            "flex-grow" -> v.toFloatOrNull()?.let { item = item.copy(grow = it.coerceAtLeast(0f)) }
+            "flex-shrink" -> v.toFloatOrNull()?.let { item = item.copy(shrink = it.coerceAtLeast(0f)) }
+            "flex-basis" -> item = item.copy(basis = parseLength(v)?.takeUnless { it == CssLength.Auto })
+            "align-self" -> item = item.copy(alignSelf = normalizePosition(v, default = "").ifEmpty { null })
+            "order" -> v.toIntOrNull()?.let { item = item.copy(order = it) }
+            "position" -> item = item.copy(
+                position = when (v.lowercase()) {
+                    "relative", "sticky" -> CssPosition.Relative
+                    "absolute", "fixed" -> CssPosition.Absolute
+                    else -> CssPosition.Static
                 }
+            )
+            "top" -> insets = insets.copy(top = parseInset(v))
+            "right" -> insets = insets.copy(right = parseInset(v))
+            "bottom" -> insets = insets.copy(bottom = parseInset(v))
+            "left" -> insets = insets.copy(left = parseInset(v))
+            "inset" -> expandBoxShorthand(splitTokens(v).map { parseInset(it) })?.let { values ->
+                insets = Insets(top = values[0], right = values[1], bottom = values[2], left = values[3])
+            }
 
-                "border" -> parseBorderOrNull(value)?.let { (width, clr) ->
-                    modifier = modifier.border(width.dp, clr)
+            else -> when {
+                property.startsWith("margin-") -> sideIndex(property.removePrefix("margin-"))?.let { i ->
+                    parseBoxLength(v)?.let { margin[i] = it }
                 }
-
-                "margin" -> modifier = modifier.then(parseMargin(value))
-
-                // ── Display ──────────────────────────────────────────────────
-                "align-content" -> verticalAlignment = parseVerticalAlignment(value)
-                "justify-content" -> horizontalAlignment = parseHorizontalAlignment(value)
-
-                // ── Dimensions ───────────────────────────────────────────────
-                "height" -> modifier = modifier.then(parseHeight(height = value))
-                "min-height" -> modifier = modifier.then(parseHeight(height = value, min = true))
-                "max-height" -> modifier = modifier.then(parseHeight(height = value, max = true))
-                "width" -> modifier = modifier.then(parseWidth(width = value))
-                "min-width" -> modifier = modifier.then(parseWidth(width = value, min = true))
-                "max-width" -> modifier = modifier.then(parseWidth(width = value, max = true))
+                property.startsWith("padding-") -> sideIndex(property.removePrefix("padding-"))?.let { i ->
+                    parseBoxLength(v)?.let { padding[i] = it }
+                }
+                property.startsWith("border-") && property.endsWith("-radius") -> {
+                    val corner = corners.indexOf(property.removePrefix("border-").removeSuffix("-radius"))
+                    if (corner >= 0) parseCornerValue(v)?.let { radii[corner] = it }
+                }
+                property.startsWith("border-") -> applyBorderLonghand(property.removePrefix("border-"), v, borders)
             }
         }
+    }
 
+    box = box.copy(
+        margin = Edges.of(margin.toList()),
+        padding = Edges.of(padding.toList()),
+        borders = borders.toList(),
+        radii = radii.toList(),
+        backgroundColor = backgroundColor,
+        backgroundBrush = background,
+    )
+    val hasWidth = box.width != null && box.width != CssLength.Auto
+    val hasHeight = box.height != null && box.height != CssLength.Auto
+    item = item.copy(insets = insets, hasWidth = hasWidth, hasHeight = hasHeight)
+
+    val display = declarations["display"]?.trim()?.lowercase()
     return StyleResult(
-        modifier = modifier,
+        box = box,
+        item = item,
         color = color,
         fontSize = fontSize,
         fontWeight = fontWeight,
         fontStyle = fontStyle,
+        fontFamily = fontFamily,
         textAlign = textAlign,
         letterSpacing = letterSpacing,
         lineHeight = lineHeight,
         textDecoration = textDecoration,
-        verticalAlignment = verticalAlignment,
-        horizontalAlignment = horizontalAlignment
+        textShadow = textShadow,
+        textTransform = textTransform,
+        maxLines = maxLines,
+        softWrap = softWrap,
+        textOverflow = textOverflow,
+        wrap = parseDisplay(declarations),
+        fillsWidth = !hasWidth && item.position != CssPosition.Absolute &&
+            display in setOf("block", "flex", "grid", "flow-root", "list-item"),
+        transitions = parseTransitions(declarations),
+        animationRefs = parseAnimationRefs(declarations),
     )
 }
 
-fun parseCssDeclarationForDiv(css: String): DivStyleResult {
-    if (css.isBlank()) return DivStyleResult()
+private fun sideIndex(side: String): Int? = sides.indexOf(side).takeIf { it >= 0 }
 
-    var modifier: Modifier = Modifier
-    var color = Color.Unspecified
-    var fontSize = TextUnit.Unspecified
-    var fontWeight: FontWeight? = null
-    var fontStyle: FontStyle? = null
-    var textAlign: TextAlign? = null
-    var letterSpacing = TextUnit.Unspecified
-    var lineHeight = TextUnit.Unspecified
-    var textDecoration: TextDecoration? = null
-    var verticalAlignment: Alignment.Vertical? = null
-    var horizontalAlignment: Alignment.Horizontal? = null
+/** A margin/padding length; `auto` counts as 0 and negative values are clamped. */
+private fun parseBoxLength(token: String): Dp? =
+    if (token.equals("auto", ignoreCase = true)) 0.dp else parseDp(token)?.coerceAtLeast(0.dp)
 
-    // ── Flex / Grid context ──────────────────────────────────────────────────
-    var display = ""
-    var flexDirection = ""
-    var justifyContent = ""
-    var alignItems = ""
-    var alignContent = ""
-    var gridTemplateColumns = ""
+/** Expands a padding/margin shorthand into [target] (`[top, right, bottom, left]`). */
+private fun applyBoxShorthand(value: String, target: Array<Dp>) {
+    val parts = splitTokens(value).map { parseBoxLength(it) ?: return }
+    expandBoxShorthand(parts)?.forEachIndexed { i, dp -> target[i] = dp }
+}
 
-    css.split(";")
-        .map { it.trim() }
-        .filter { it.isNotEmpty() && ':' in it }
-        .forEach { declaration ->
-            val key = declaration.substringBefore(':').trim().lowercase()
-            val value = declaration.substringAfter(':').trim()
+/** Parses each whitespace token with [parse] and expands the 1–4 value shorthand. */
+private fun <T : Any> expandTokens(value: String, parse: (String) -> T?): List<T>? =
+    expandBoxShorthand(splitTokens(value).map { parse(it) ?: return null })
 
-            when (key) {
-                "color"            -> color = parseColor(value)
-                "font-size"        -> fontSize = parseLengthAsTextUnit(value)
-                "font-weight"      -> fontWeight = parseFontWeight(value)
-                "font-style"       -> fontStyle = parseFontStyle(value)
-                "text-align"       -> textAlign = parseTextAlign(value)
-                "letter-spacing"   -> letterSpacing = parseLengthAsTextUnit(value)
-                "line-height"      -> lineHeight = parseLengthAsTextUnit(value)
-                "text-decoration"  -> textDecoration = parseTextDecoration(value)
-                "padding"          -> modifier = modifier.then(parsePadding(value))
-                "background-color",
-                "background"       -> parseColorOrNull(value)?.let { modifier = modifier.background(it) }
-                "border"           -> parseBorderOrNull(value)?.let { (w, c) -> modifier = modifier.border(w.dp, c) }
-                "margin"           -> modifier = modifier.then(parseMargin(value))
-                "height"           -> modifier = modifier.then(parseHeight(height = value))
-                "min-height"       -> modifier = modifier.then(parseHeight(height = value, min = true))
-                "max-height"       -> modifier = modifier.then(parseHeight(height = value, max = true))
-                "width"            -> modifier = modifier.then(parseWidth(width = value))
-                "min-width"        -> modifier = modifier.then(parseWidth(width = value, min = true))
-                "max-width"        -> modifier = modifier.then(parseWidth(width = value, max = true))
+private fun parseInset(value: String): CssLength? = parseLength(value)?.takeUnless { it == CssLength.Auto }
 
-                // Flex / Grid
-                "display"                  -> display = value
-                "flex-direction"           -> flexDirection = value
-                "justify-content"          -> justifyContent = value
-                "align-items"              -> alignItems = value
-                "align-content"            -> alignContent = value
-                "grid-template-columns"    -> gridTemplateColumns = value
+private fun parseOverflow(value: String?): Overflow = when (value) {
+    "hidden", "clip" -> Overflow.Hidden
+    "scroll", "auto" -> Overflow.Scroll
+    else -> Overflow.Visible
+}
+
+private fun parseAspectRatio(value: String): Float? {
+    val parts = value.split('/').map { it.trim().toFloatOrNull() ?: return null }
+    val ratio = when (parts.size) {
+        1 -> parts[0]
+        2 -> if (parts[1] != 0f) parts[0] / parts[1] else return null
+        else -> return null
+    }
+    return ratio.takeIf { it > 0f }
+}
+
+/** Parses `0.5` or `50%` into a 0..1 fraction. */
+internal fun parseFraction(value: String): Float? {
+    val (number, unit) = splitNumber(value) ?: return null
+    return when (unit) {
+        "" -> number
+        "%" -> number / 100f
+        else -> null
+    }?.coerceIn(0f, 1f)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Border
+// ─────────────────────────────────────────────────────────────────────────────
+
+internal fun parseBorderWidth(token: String): Dp? = when (token.trim().lowercase()) {
+    "thin" -> 1.dp
+    "medium" -> 3.dp
+    "thick" -> 5.dp
+    else -> parseDp(token)?.coerceAtLeast(0.dp)
+}
+
+/** Parses a border shorthand (`<width> <style> <color>` in any order) for one side. */
+internal fun parseBorderSide(value: String): BorderSide {
+    val trimmed = value.trim().lowercase()
+    if (trimmed == "none" || trimmed == "0") return BorderSide(style = BorderStyle.None)
+    var side = BorderSide()
+    for (token in splitTokens(trimmed)) {
+        val style = BorderStyle.parse(token)
+        val width = if (style == null) parseBorderWidth(token) else null
+        when {
+            style != null -> side = side.copy(style = style)
+            width != null -> side = side.copy(width = width)
+            else -> parseColorOrNull(token)?.let { side = side.copy(color = it) }
+        }
+    }
+    return side
+}
+
+/** Handles `border-<side>`, `border-<side>-width|style|color`. */
+private fun applyBorderLonghand(rest: String, value: String, borders: MutableList<BorderSide>) {
+    val side = sides.indexOf(rest.substringBefore('-'))
+    if (side < 0) return
+    when (rest.substringAfter('-', missingDelimiterValue = "")) {
+        "" -> borders[side] = parseBorderSide(value)
+        "width" -> parseBorderWidth(value)?.let { borders[side] = borders[side].copy(width = it) }
+        "style" -> BorderStyle.parse(value)?.let { borders[side] = borders[side].copy(style = it) }
+        "color" -> parseColorOrNull(value)?.let { borders[side] = borders[side].copy(color = it) }
+    }
+}
+
+/** Legacy helper: `"2px solid red"` → `2f to Color.Red`. */
+fun parseBorderOrNull(value: String): Pair<Float, Color>? {
+    val side = parseBorderSide(value)
+    val width = side.resolvedWidth.takeIf { it > 0.dp } ?: return null
+    return width.value to (side.color ?: Color.Black)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shadows, transforms, filters, flex
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Parses a comma-separated `box-shadow` / `text-shadow` list:
+ * `[inset] <x> <y> [blur] [spread] <color>`.
+ */
+internal fun parseShadows(value: String): List<CssShadow> {
+    if (value.trim().equals("none", ignoreCase = true)) return emptyList()
+    return splitTopLevel(value, ',').mapNotNull { part ->
+        val lengths = mutableListOf<Dp>()
+        var color = Color.Black.copy(alpha = 0.3f)
+        var inset = false
+        for (token in splitTokens(part.trim().lowercase())) {
+            if (token == "inset") { inset = true; continue }
+            val dp = parseDp(token)
+            if (dp != null) lengths += dp else parseColorOrNull(token)?.let { color = it }
+        }
+        if (lengths.size < 2) return@mapNotNull null
+        CssShadow(
+            offsetX = lengths[0],
+            offsetY = lengths[1],
+            blur = lengths.getOrElse(2) { 0.dp }.coerceAtLeast(0.dp),
+            spread = lengths.getOrElse(3) { 0.dp },
+            color = color,
+            inset = inset,
+        )
+    }
+}
+
+/** Backwards-compatible single-shadow parser. */
+internal fun parseShadow(value: String): CssShadow? = parseShadows(value).firstOrNull()
+
+/** Splits on [separator] while ignoring separators inside parentheses. */
+internal fun splitTopLevel(value: String, separator: Char): List<String> {
+    val parts = mutableListOf<String>()
+    var depth = 0
+    var start = 0
+    value.forEachIndexed { i, ch ->
+        when (ch) {
+            '(' -> depth++
+            ')' -> depth--
+            separator -> if (depth == 0) { parts += value.substring(start, i); start = i + 1 }
+        }
+    }
+    parts += value.substring(start)
+    return parts
+}
+
+private val functionRegex = Regex("""([a-zA-Z-]+)\s*\(([^)]*)\)""")
+
+/**
+ * Parses `transform` into a [TransformSpec]: `translate(x[, y])`, `translateX/Y()`,
+ * `rotate()`, `scale(x[, y])`, `scaleX/Y()`. Translations add up, rotations add up,
+ * scales multiply; the result is applied as translate → rotate → scale.
+ */
+internal fun parseTransform(value: String): TransformSpec {
+    if (value.trim().equals("none", ignoreCase = true)) return TransformSpec()
+    var spec = TransformSpec()
+    for (match in functionRegex.findAll(value)) {
+        val name = match.groupValues[1].lowercase()
+        val args = match.groupValues[2].split(',', ' ').filter { it.isNotBlank() }
+        fun dp(i: Int) = args.getOrNull(i)?.let(::parseDp) ?: 0.dp
+        fun num(i: Int) = args.getOrNull(i)?.toFloatOrNull()
+        when (name) {
+            "translate" -> spec = spec.copy(translateX = spec.translateX + dp(0), translateY = spec.translateY + dp(1))
+            "translatex" -> spec = spec.copy(translateX = spec.translateX + dp(0))
+            "translatey" -> spec = spec.copy(translateY = spec.translateY + dp(0))
+            "rotate", "rotatez" -> args.firstOrNull()?.let(::parseAngle)?.let { spec = spec.copy(rotate = spec.rotate + it) }
+            "scale" -> {
+                val x = args.getOrNull(0)?.toFloatOrNull() ?: continue
+                val y = args.getOrNull(1)?.toFloatOrNull() ?: x
+                spec = spec.copy(scaleX = spec.scaleX * x, scaleY = spec.scaleY * y)
+            }
+            "scalex" -> num(0)?.let { spec = spec.copy(scaleX = spec.scaleX * it) }
+            "scaley" -> num(0)?.let { spec = spec.copy(scaleY = spec.scaleY * it) }
+        }
+    }
+    return spec
+}
+
+/** Parses `filter` into a blur radius plus color-matrix functions. */
+internal fun parseFilter(value: String): Pair<Dp, List<FilterFunction>> {
+    var blur = 0.dp
+    val functions = mutableListOf<FilterFunction>()
+    if (value.trim().equals("none", ignoreCase = true)) return blur to functions
+    for (match in functionRegex.findAll(value)) {
+        val name = match.groupValues[1].lowercase()
+        val arg = match.groupValues[2].trim()
+        when (name) {
+            "blur" -> blur = (parseDp(arg) ?: 0.dp).coerceAtLeast(0.dp)
+            "hue-rotate" -> parseAngle(arg)?.let { functions += FilterFunction(name, it) }
+            "grayscale", "sepia", "invert", "opacity", "saturate", "brightness", "contrast" -> {
+                val amount = splitNumber(arg)?.let { (n, unit) -> if (unit == "%") n / 100f else n } ?: 1f
+                functions += FilterFunction(name, amount.coerceAtLeast(0f))
             }
         }
-
-    val wrap = parseDivDisplay(
-        display = display,
-        flexDirection = flexDirection,
-        justifyContent = justifyContent,
-        alignItems = alignItems,
-        gridTemplateColumns = gridTemplateColumns,
-        alignContent = alignContent,
-    )
-
-    return DivStyleResult(
-        modifier = modifier,
-        color = color,
-        fontSize = fontSize,
-        fontWeight = fontWeight,
-        fontStyle = fontStyle,
-        textAlign = textAlign,
-        letterSpacing = letterSpacing,
-        lineHeight = lineHeight,
-        textDecoration = textDecoration,
-        verticalAlignment = verticalAlignment,
-        horizontalAlignment = horizontalAlignment,
-        wrap = wrap,
-    )
+    }
+    return blur to functions
 }
 
-// Overload
-fun parseCssDeclaration(css: String, div: Boolean, clickable: Boolean): StyleResult {
-    val parsed = parseCssDeclaration(css)
-    if (div) {
-        return parseCssDeclarationForDiv(css)
+/** Parses the `flex` shorthand into `(grow, shrink, basis)`. */
+internal fun parseFlexShorthand(value: String): Triple<Float, Float, CssLength?>? {
+    when (value.trim().lowercase()) {
+        "none" -> return Triple(0f, 0f, null)
+        "auto" -> return Triple(1f, 1f, null)
+        "initial" -> return Triple(0f, 1f, null)
     }
-    if (!clickable) {
-        return parsed
-    }
-    return ClickableStyleResult(
-        modifier = parsed.modifier,
-        color = parsed.color,
-        fontSize = parsed.fontSize,
-        fontWeight = parsed.fontWeight,
-        fontStyle = parsed.fontStyle,
-        textAlign = parsed.textAlign,
-        letterSpacing = parsed.letterSpacing,
-        lineHeight = parsed.lineHeight,
-        textDecoration = parsed.textDecoration,
-        verticalAlignment = parsed.verticalAlignment,
-        horizontalAlignment = parsed.horizontalAlignment,
-        onHover = {},
-        onClick = {}
-    )
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Selector-map parser (full stylesheet)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Parses a minimal CSS stylesheet into a map of selector → [StyleResult].
- *
- * Only class selectors (`.foo`) and element selectors (`Text`, `Button`) are
- * supported. Combinators, pseudo-classes, and media queries are ignored.
- *
- * ```kotlin
- * val styles = parseCssStylesheet("""
- *     .title  { color: #212121; font-size: 24; font-weight: bold; }
- *     .body   { color: #616161; font-size: 14; line-height: 22; }
- * """.trimIndent())
- *
- * val titleStyle = styles[".title"]?.toTextStyle()
- * ```
- */
-fun parseCssStylesheet(css: String): Map<String, StyleResult> {
-    val ruleRegex = Regex("""([^{}]+)\{([^{}]*)}""")
-    return ruleRegex.findAll(css)
-        .associate { match ->
-            val selector = match.groupValues[1].trim()
-            val declarations = match.groupValues[2].trim()
-            selector to parseCssDeclaration(declarations)
+    val tokens = splitTokens(value)
+    val numbers = mutableListOf<Float>()
+    var basis: CssLength? = CssLength.Fixed(0.dp)
+    for (token in tokens) {
+        val number = token.toFloatOrNull()
+        when {
+            number != null && numbers.size < 2 -> numbers += number
+            token.equals("auto", true) || token.equals("content", true) -> basis = null
+            else -> basis = parseLength(token) ?: return null
         }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Length / unit parsing
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Converts a CSS length value to a Compose [TextUnit] (always in `sp`).
- *
- * Supported units: `px`, `sp`, `em` (treated as sp), bare integers.
- * Returns [TextUnit.Unspecified] for unrecognised input.
- */
-internal fun parseLengthAsTextUnit(value: String): TextUnit {
-    val trimmed = value.trim().lowercase()
-    return when {
-        trimmed.endsWith("sp") -> trimmed.removeSuffix("sp").toFloatOrNull()?.sp
-        trimmed.endsWith("px") -> trimmed.removeSuffix("px").toFloatOrNull()?.sp   // 1:1 approximation
-        trimmed.endsWith("em") -> trimmed.removeSuffix("em").toFloatOrNull()?.sp
-        else -> trimmed.toFloatOrNull()?.sp
-    } ?: TextUnit.Unspecified
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Padding shorthand
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Parses CSS `padding` shorthand (1–4 values) into a [Modifier.padding] call.
- *
- * Follows standard CSS expansion rules:
- * - 1 value  → all sides
- * - 2 values → vertical | horizontal
- * - 3 values → top | horizontal | bottom
- * - 4 values → top | end | bottom | start
- */
-internal fun parsePadding(value: String): Modifier {
-    val parts = value.trim().split(Regex("\\s+"))
-        .mapNotNull { token ->
-            val v = token.lowercase().removeSuffix("px").removeSuffix("dp").toFloatOrNull()
-            v?.dp
-        }
-
-    return when (parts.size) {
-        1 -> Modifier.padding(all = parts[0])
-        2 -> Modifier.padding(vertical = parts[0], horizontal = parts[1])
-        3 -> Modifier.padding(top = parts[0], start = parts[1], end = parts[1], bottom = parts[2])
-        4 -> Modifier.padding(top = parts[0], end = parts[1], bottom = parts[2], start = parts[3])
-        else -> Modifier
     }
+    if (numbers.isEmpty() && tokens.size == 1) return Triple(1f, 1f, basis)
+    return Triple(numbers.getOrElse(0) { 1f }.coerceAtLeast(0f), numbers.getOrElse(1) { 1f }.coerceAtLeast(0f), basis)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Margin handling
-// ─────────────────────────────────────────────────────────────────────────────
-fun parseMargin(value: String): Modifier {
-    val parts = value.trim().split(Regex("\\s+"))
-        .mapNotNull { token ->
-            val v = token.lowercase().removeSuffix("px").removeSuffix("dp").toFloatOrNull()
-            v?.dp
-        }
-
-    return when (parts.size) {
-        1 -> Modifier.absolutePadding(parts[0], parts[0], parts[0], parts[0])
-        2 -> Modifier.absolutePadding(parts[1], parts[0], parts[1], parts[0])
-        3 -> Modifier.absolutePadding(parts[1], parts[0], parts[1], parts[2])
-        4 -> Modifier.absolutePadding(parts[3], parts[0], parts[1], parts[2])
-        else -> Modifier
+/** Parses a CSS angle (`45deg`, `0.25turn`, `1.57rad`, bare degrees) into degrees. */
+internal fun parseAngle(value: String): Float? {
+    val (number, unit) = splitNumber(value) ?: return null
+    return when (unit) {
+        "", "deg" -> number
+        "turn" -> number * 360f
+        "rad" -> Math.toDegrees(number.toDouble()).toFloat()
+        "grad" -> number * 0.9f
+        else -> null
     }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Border shorthand
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Parses a simplified CSS `border` shorthand: `<width> <style> <color>`.
- * Only the width and color are extracted; border-style is intentionally ignored
- * since Compose's [Modifier.border] uses a single solid outline.
- *
- * Returns `null` if parsing fails, allowing the caller to skip the modifier.
- */
-fun parseBorderOrNull(value: String): Pair<Float, Color>? {
-    val parts = value.trim().split(Regex("\\s+"))
-    val width = parts.firstOrNull()
-        ?.lowercase()
-        ?.removeSuffix("px")
-        ?.removeSuffix("dp")
-        ?.toFloatOrNull()
-        ?: return null
-    val colorToken = parts.lastOrNull() ?: return null
-    val color = parseColorOrNull(colorToken) ?: return null
-    return width to color
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Color parsing
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Parses a CSS color value into a Compose [Color].
- *
- * Supported formats:
- * - Hex: `#RGB`, `#RRGGBB`, `#AARRGGBB`
- * - `rgb(r, g, b)` and `rgba(r, g, b, a)`
- * - CSS named colors (see [cssNamedColors])
- *
- * Falls back to [Color.Black] on unrecognised input.
- */
-fun parseColor(color: String): Color = parseColorOrNull(color) ?: Color.Black
-
-/**
- * Like [parseColor] but returns `null` instead of a fallback on failure,
- * allowing call sites to choose their own default.
- */
-fun parseColorOrNull(color: String): Color? {
-    val raw = color.trim().lowercase()
-    return when {
-        raw.startsWith("#") -> parseHexColor(raw)
-        raw.startsWith("rgba") -> parseRgbaColor(raw)
-        raw.startsWith("rgb") -> parseRgbColor(raw)
-        else -> colorByName(raw)
-    }
-}
-
-private fun parseHexColor(hex: String): Color? = try {
-    Color(hex.toColorInt())
-} catch (_: IllegalArgumentException) {
-    null
-}
-
-private fun parseRgbColor(raw: String): Color? {
-    val nums = raw.removePrefix("rgb(").removeSuffix(")").split(",")
-        .mapNotNull { it.trim().toIntOrNull() }
-    return if (nums.size == 3) Color(nums[0], nums[1], nums[2]) else null
-}
-
-private fun parseRgbaColor(raw: String): Color? {
-    val nums = raw.removePrefix("rgba(").removeSuffix(")").split(",")
-    val rgb = nums.take(3).mapNotNull { it.trim().toIntOrNull() }
-    val alpha = nums.getOrNull(3)?.trim()?.toFloatOrNull()
-    return if (rgb.size == 3 && alpha != null)
-        Color(rgb[0], rgb[1], rgb[2], (alpha * 255).toInt())
-    else null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -412,13 +574,12 @@ private fun parseRgbaColor(raw: String): Color? {
 
 /**
  * Parses a CSS `font-weight` value.
- * Accepts numeric weights (`100`–`900`) and keywords (`normal`, `bold`, `bolder`, `lighter`).
+ * Accepts numeric weights (`1`–`1000`) and keywords (`normal`, `bold`, `bolder`, `lighter`).
  */
 fun parseFontWeight(fWeight: String): FontWeight {
     val trimmed = fWeight.trim().lowercase()
-    trimmed.toIntOrNull()?.let { return FontWeight(it) }
+    trimmed.toIntOrNull()?.let { return FontWeight(it.coerceIn(1, 1000)) }
     return when (trimmed) {
-        "normal" -> FontWeight.Normal
         "bold" -> FontWeight.Bold
         "bolder" -> FontWeight.ExtraBold
         "lighter" -> FontWeight.Light
@@ -426,17 +587,62 @@ fun parseFontWeight(fWeight: String): FontWeight {
     }
 }
 
-/**
- * Parses a CSS `font-style` value (`normal`, `italic`, `oblique`).
- */
-fun parseFontStyle(fStyle: String): FontStyle = when (fStyle.trim().lowercase()) {
+/** Parses a CSS `font-style` value (`normal`, `italic`, `oblique`). */
+fun parseFontStyle(fStyle: String): FontStyle = when (fStyle.trim().lowercase().substringBefore(' ')) {
     "italic", "oblique" -> FontStyle.Italic
     else -> FontStyle.Normal
 }
 
 /**
- * Parses a CSS `text-align` value (`left`, `right`, `center`, `justify`).
+ * Parses a CSS `font-family` list, returning the first family that resolves:
+ * fonts registered with [CssFonts], then the generic families
+ * `serif`, `sans-serif`, `monospace`, `cursive` and `system-ui`.
  */
+fun parseFontFamily(value: String): FontFamily? =
+    splitTopLevel(value, ',').firstNotNullOfOrNull { raw ->
+        val name = raw.trim().trim('"', '\'')
+        CssFonts[name] ?: when (name.lowercase()) {
+            "serif" -> FontFamily.Serif
+            "sans-serif" -> FontFamily.SansSerif
+            "monospace" -> FontFamily.Monospace
+            "cursive" -> FontFamily.Cursive
+            "system-ui", "default" -> FontFamily.Default
+            else -> null
+        }
+    }
+
+internal data class FontShorthand(
+    val style: FontStyle,
+    val weight: FontWeight,
+    val size: TextUnit,
+    val lineHeight: TextUnit?,
+    val family: FontFamily?,
+)
+
+/** Parses `font: [style] [variant] [weight] <size>[/<line-height>] <family>`. */
+internal fun parseFontShorthand(value: String): FontShorthand? {
+    val tokens = value.trim().split(Regex("\\s+"))
+    var style = FontStyle.Normal
+    var weight = FontWeight.Normal
+    for ((index, token) in tokens.withIndex()) {
+        val lower = token.lowercase()
+        val sizePart = lower.substringBefore('/')
+        val size = parseLengthAsTextUnit(sizePart)
+        if (size != TextUnit.Unspecified && sizePart.toIntOrNull()?.let { it % 100 == 0 && it in 100..900 } != true) {
+            val lineHeight = lower.substringAfter('/', "").takeIf { it.isNotEmpty() }?.let(::parseLineHeight)
+            val family = tokens.drop(index + 1).joinToString(" ").takeIf { it.isNotBlank() }?.let(::parseFontFamily)
+            return FontShorthand(style, weight, size, lineHeight, family)
+        }
+        when {
+            lower == "italic" || lower == "oblique" -> style = FontStyle.Italic
+            lower == "bold" || lower == "bolder" || lower == "lighter" || lower.toIntOrNull() != null ->
+                weight = parseFontWeight(lower)
+        }
+    }
+    return null
+}
+
+/** Parses a CSS `text-align` value (`left`, `right`, `center`, `justify`, `start`, `end`). */
 fun parseTextAlign(tAlign: String): TextAlign = when (tAlign.trim().lowercase()) {
     "left" -> TextAlign.Left
     "center" -> TextAlign.Center
@@ -446,187 +652,20 @@ fun parseTextAlign(tAlign: String): TextAlign = when (tAlign.trim().lowercase())
     else -> TextAlign.Start
 }
 
-/**
- * Parses a CSS `text-decoration` value (`none`, `underline`, `line-through`).
- */
-fun parseTextDecoration(tDecor: String): TextDecoration = when (tDecor.trim().lowercase()) {
-    "underline" -> TextDecoration.Underline
-    "line-through" -> TextDecoration.LineThrough
-    else -> TextDecoration.None
+/** Parses `text-decoration`; `underline` and `line-through` may be combined. */
+fun parseTextDecoration(tDecor: String): TextDecoration {
+    val tokens = splitTokens(tDecor.lowercase())
+    val decorations = buildList {
+        if ("underline" in tokens) add(TextDecoration.Underline)
+        if ("line-through" in tokens) add(TextDecoration.LineThrough)
+    }
+    return if (decorations.isEmpty()) TextDecoration.None else TextDecoration.combine(decorations)
 }
 
-fun parseVerticalAlignment(vAlign: String): Alignment.Vertical? = when (vAlign.trim().lowercase()) {
-    "flex-start" -> Alignment.Top
-    "flex-end" -> Alignment.Bottom
-    "center" -> Alignment.CenterVertically
-    else -> null
-}
-
-fun parseHorizontalAlignment(hAlign: String): Alignment.Horizontal? = when (hAlign.trim().lowercase()) {
-    "flex-start" -> Alignment.Start
-    "flex-end" -> Alignment.End
-    "center" -> Alignment.CenterHorizontally
-    else -> null
-}
-
-// Handle hover effect
-fun parseHover(css: String) {
-
-}
-
-fun parseHeight(height: String, min: Boolean = false, max: Boolean = false): Modifier {
-    return when {
-        min && !max -> Modifier.heightIn(min = height.toInt().dp)
-        !min && max -> Modifier.heightIn(max = height.toInt().dp)
-        else -> Modifier.height(height.toInt().dp)
-    }
-}
-
-fun parseWidth(width: String, min: Boolean = false, max: Boolean = false): Modifier {
-    return when {
-        min && !max -> Modifier.widthIn(min = width.toInt().dp)
-        !min && max -> Modifier.widthIn(max = width.toInt().dp)
-        else -> Modifier.width(width.toInt().dp)
-    }
-}
-
-/**
- * Resolves a CSS `display` + flex/grid context into a [Wrap] instance.
- *
- * CSS properties consumed:
- * - `display`: flex | grid | block | inline | inline-block | none
- * - `flex-direction`: row | row-reverse | column | column-reverse
- * - `justify-content`: flex-start | flex-end | center | space-between | space-around | space-evenly
- * - `align-items`: flex-start | flex-end | center
- * - `grid-template-columns`: repeat(N, ...) or bare integer for column count
- * - `align-content`: for Box content alignment
- */
-fun parseDivDisplay(
-    display: String,
-    flexDirection: String = "",
-    justifyContent: String = "",
-    alignItems: String = "",
-    gridTemplateColumns: String = "",
-    alignContent: String = "",
-): Wrap? {
-    val hArrangement = parseHorizontalArrangement(justifyContent)
-    val vArrangement = parseVerticalArrangement(justifyContent)
-    val hAlignment = parseHorizontalAlignmentFromItems(alignItems)
-    val vAlignment = parseVerticalAlignmentFromItems(alignItems)
-
-    return when (display.trim().lowercase()) {
-
-        "flex" -> when (flexDirection.trim().lowercase()) {
-            "column"         -> ColumnWrap(
-                inverse = false,
-                verticalArrangement = vArrangement,
-                horizontalAlignment = hAlignment,
-            )
-            "column-reverse" -> ColumnWrap(
-                inverse = true,
-                verticalArrangement = vArrangement,
-                horizontalAlignment = hAlignment,
-            )
-            "row-reverse"    -> RowWrap(
-                inverse = true,
-                horizontalArrangement = hArrangement,
-                verticalAlignment = vAlignment,
-            )
-            else             -> RowWrap(   // "row" is CSS default
-                inverse = false,
-                horizontalArrangement = hArrangement,
-                verticalAlignment = vAlignment,
-            )
-        }
-
-        "grid"         -> GridWrap(
-            columns = parseGridColumns(gridTemplateColumns),
-            horizontalArrangement = hArrangement,
-            verticalArrangement = vArrangement,
-        )
-
-        "block"        -> BlockWrap
-
-        "inline",
-        "inline-block",
-        "inline-flex"  -> InlineWrap
-
-        "box"          -> BoxWrap(
-            contentAlignment = parseBoxAlignment(alignContent)
-        )
-
-        "none"         -> NoneWrap
-
-        else           -> null
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Arrangement / Alignment helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Maps CSS `justify-content` to a horizontal [Arrangement] (used in Row / Grid). */
-private fun parseHorizontalArrangement(value: String): Arrangement.Horizontal =
-    when (value.trim().lowercase()) {
-        "flex-end"      -> Arrangement.End
-        "center"        -> Arrangement.Center
-        "space-between" -> Arrangement.SpaceBetween
-        "space-around"  -> Arrangement.SpaceAround
-        "space-evenly"  -> Arrangement.SpaceEvenly
-        else            -> Arrangement.Start   // flex-start / default
-    }
-
-/** Maps CSS `justify-content` to a vertical [Arrangement] (used in Column). */
-private fun parseVerticalArrangement(value: String): Arrangement.Vertical =
-    when (value.trim().lowercase()) {
-        "flex-end"      -> Arrangement.Bottom
-        "center"        -> Arrangement.Center
-        "space-between" -> Arrangement.SpaceBetween
-        "space-around"  -> Arrangement.SpaceAround
-        "space-evenly"  -> Arrangement.SpaceEvenly
-        else            -> Arrangement.Top
-    }
-
-/** Maps CSS `align-items` to a horizontal [Alignment] (cross-axis of Column). */
-private fun parseHorizontalAlignmentFromItems(value: String): Alignment.Horizontal =
-    when (value.trim().lowercase()) {
-        "flex-end", "end" -> Alignment.End
-        "center"          -> Alignment.CenterHorizontally
-        else              -> Alignment.Start
-    }
-
-/** Maps CSS `align-items` to a vertical [Alignment] (cross-axis of Row). */
-private fun parseVerticalAlignmentFromItems(value: String): Alignment.Vertical =
-    when (value.trim().lowercase()) {
-        "flex-end", "end" -> Alignment.Bottom
-        "center"          -> Alignment.CenterVertically
-        else              -> Alignment.Top
-    }
-
-/** Maps CSS `align-content` to a Compose [Alignment] for [BoxWrap]. */
-private fun parseBoxAlignment(value: String): Alignment =
-    when (value.trim().lowercase()) {
-        "center"                    -> Alignment.Center
-        "flex-end", "end"           -> Alignment.BottomEnd
-        "flex-start", "start"       -> Alignment.TopStart
-        "top-center"                -> Alignment.TopCenter
-        "bottom-center"             -> Alignment.BottomCenter
-        "center-start"              -> Alignment.CenterStart
-        "center-end"                -> Alignment.CenterEnd
-        else                        -> Alignment.TopStart
-    }
-
-/**
- * Parses `grid-template-columns` into a column count for [GridWrap].
- *
- * Handles:
- * - `repeat(3, 1fr)` → 3
- * - `repeat(4, auto)` → 4
- * - bare integer `"2"` → 2
- */
-private fun parseGridColumns(value: String): Int {
-    if (value.isBlank()) return 2
-    val repeatMatch = Regex("""repeat\s*\(\s*(\d+)""").find(value)
-    if (repeatMatch != null) return repeatMatch.groupValues[1].toIntOrNull() ?: 2
-    return value.trim().toIntOrNull() ?: 2
+/** Parses `text-transform` (`uppercase`, `lowercase`, `capitalize`, `none`). */
+fun parseTextTransform(value: String): TextTransform = when (value.trim().lowercase()) {
+    "uppercase" -> TextTransform.Uppercase
+    "lowercase" -> TextTransform.Lowercase
+    "capitalize" -> TextTransform.Capitalize
+    else -> TextTransform.None
 }
