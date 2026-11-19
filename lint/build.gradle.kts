@@ -10,6 +10,6 @@ dependencies {
 
 tasks.jar {
     manifest {
-        attributes["Lint-Registry-v2"] = "com.example.cssintegration.lint.CssLintRegistry"
+        attributes["Lint-Registry-v2"] = "io.github.stagnant09.csscompose.lint.CssLintRegistry"
     }
 }

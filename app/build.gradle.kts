@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.cssintegration"
+    namespace = "io.github.stagnant09.csscompose.sample"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.cssintegration"
+        applicationId = "io.github.stagnant09.csscompose.sample"
         minSdk = 35
         targetSdk = 36
         versionCode = 1
@@ -36,9 +36,8 @@ android {
         compose = true
     }
 
-    testOptions {
-        unitTests.isReturnDefaultValues = true
-    }
+    // Ship the stylesheet that lives next to the theme code as an asset (assets/styles.css).
+    sourceSets["main"].assets.srcDir("src/main/java/io/github/stagnant09/csscompose/sample/ui/theme/css")
 
     lint {
         error += "MissingCssStyleAnnotation"   // promotes from warning to build error
@@ -47,6 +46,8 @@ android {
 }
 
 dependencies {
+    implementation(project(":css-integration"))
+    implementation(project(":sample-shared"))   // showcase cards shared with web-sample
 
     implementation("androidx.core:core-ktx:1.10.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.1")
